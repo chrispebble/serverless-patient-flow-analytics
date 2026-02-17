@@ -1,0 +1,306 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin - Line Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .row { margin: 10px 0; }
+    table { border-collapse: collapse; width: 100%; max-width: 1200px; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; vertical-align: top; }
+    th { background: #f6f6f6; text-align:left; }
+    code { background:#f3f3f3; padding:2px 6px; border-radius:6px; }
+    .muted { color:#666; }
+    button { padding:8px 10px; border-radius:10px; border:1px solid #ccc; background:#f7f7f7; margin-right:8px; }
+    .histRow { display:flex; align-items:center; gap:10px; margin:6px 0; }
+    .histLabel { width:80px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .histBarWrap { flex:1; border:1px solid #eee; height:14px; border-radius:8px; overflow:hidden; }
+    .histBar { height:14px; background:#4b88ff; width:0%; }
+    .histCount { width:40px; text-align:right; }
+  </style>
+</head>
+<body>
+  <h2>Line Tracker Admin</h2>
+
+  <div class="row">
+    Day (YYYY-MM-DD):
+    <input id="day" type="text" size="12"/>
+    <button id="load" type="button">Load</button>
+    <span id="msg" class="muted"></span>
+  </div>
+
+  <div class="row">
+    <button id="exportWide" type="button">Export CSV</button>
+  </div>
+
+  <div class="row">
+    <b>Sessions:</b> <span id="count">0</span> |
+    <b>Avg duration:</b> <span id="avg">0</span>
+    <span class="muted" style="margin-left:10px;">Timezone: <span id="tz">(loading)</span></span>
+  </div>
+
+  <h3 style="margin-top:18px;">Arrivals per hour</h3>
+  <div class="muted">Based on each session's first scan time (America/Los_Angeles).</div>
+  <div id="hist"></div>
+
+  <h3 style="margin-top:18px;">Sessions</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Entry</th>
+        <th>Last</th>
+        <th>Duration</th>
+        <th>Reasons</th>
+        <th>Stations</th>
+        <th>SessionId</th>
+      </tr>
+    </thead>
+    <tbody id="tbodySessions"></tbody>
+  </table>
+
+  <h3 style="margin-top:18px;">Station transition analytics</h3>
+  <div class="muted">Computed from consecutive station scans within each session.</div>
+  <table style="margin-top:8px;">
+    <thead>
+      <tr>
+        <th>From</th>
+        <th>To</th>
+        <th>Count</th>
+        <th>Avg</th>
+        <th>P50</th>
+        <th>P90</th>
+      </tr>
+    </thead>
+    <tbody id="tbodyTransitions"></tbody>
+  </table>
+
+<script>
+(function () {
+  var lastData = null;
+
+  function nice(secs){
+    secs = Math.max(0, Math.floor(secs || 0));
+    var h = Math.floor(secs/3600);
+    var m = Math.floor((secs%3600)/60);
+    var s = secs%60;
+    if(h>0) return h + "h " + m + "m";
+    if(m>0) return m + "m " + s + "s";
+    return s + "s";
+  }
+
+  function todayLocal(){
+    var d = new Date();
+    var yyyy = d.getFullYear();
+    var mm = ("0"+(d.getMonth()+1)).slice(-2);
+    var dd = ("0"+d.getDate()).slice(-2);
+    return yyyy + "-" + mm + "-" + dd;
+  }
+
+  function postJson(path, payload, cb) {
+    fetch(path, {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload||{})
+    }).then(function(r){ return r.json(); })
+      .then(function(d){ cb(null,d); })
+      .catch(function(e){ cb(e,null); });
+  }
+
+  function renderHistogram(data){
+    var wrap = document.getElementById("hist");
+    wrap.innerHTML = "";
+
+    var rows = data.arrivalsByHour || [];
+    var max = 0;
+    for(var i=0;i<rows.length;i++){
+      max = Math.max(max, rows[i].count || 0);
+    }
+    if(max === 0){
+      wrap.innerHTML = '<div class="muted">No arrivals recorded for this day.</div>';
+      return;
+    }
+
+    for(var h=0; h<24; h++){
+      var r = rows[h] || {hour:h, count:0};
+      var label = (("0"+h).slice(-2)) + ":00";
+      var pct = Math.round(((r.count||0) / max) * 100);
+
+      var row = document.createElement("div");
+      row.className = "histRow";
+      row.innerHTML =
+        '<div class="histLabel">'+label+'</div>' +
+        '<div class="histBarWrap"><div class="histBar" style="width:'+pct+'%"></div></div>' +
+        '<div class="histCount">'+(r.count||0)+'</div>';
+      wrap.appendChild(row);
+    }
+  }
+
+  function renderSessions(data){
+    document.getElementById("count").textContent = data.countSessions || 0;
+    document.getElementById("avg").textContent = nice(data.avgDurationSeconds || 0);
+    document.getElementById("tz").textContent = data.timezone || "";
+
+    var tb = document.getElementById("tbodySessions");
+    tb.innerHTML = "";
+    var sessions = data.sessions || [];
+    for(var i=0;i<sessions.length;i++){
+      var s = sessions[i];
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td><code>"+(s.entryIso||"")+"</code></td>" +
+        "<td><code>"+(s.lastIso||"")+"</code></td>" +
+        "<td>"+nice(s.durationSeconds||0)+"</td>" +
+        "<td>"+(s.reasonsCsv||"")+"</td>" +
+        "<td>"+((s.stations||[]).join(" \u2192 "))+"</td>" +
+        "<td><code>"+(s.sessionId||"")+"</code></td>";
+      tb.appendChild(tr);
+    }
+  }
+
+  function renderTransitions(data){
+    var tb = document.getElementById("tbodyTransitions");
+    tb.innerHTML = "";
+    var rows = data.transitions || [];
+    for(var i=0;i<rows.length;i++){
+      var t = rows[i];
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>"+(t.from||"")+"</td>" +
+        "<td>"+(t.to||"")+"</td>" +
+        "<td>"+(t.count||0)+"</td>" +
+        "<td>"+nice(t.avgSeconds||0)+"</td>" +
+        "<td>"+nice(t.p50Seconds||0)+"</td>" +
+        "<td>"+nice(t.p90Seconds||0)+"</td>";
+      tb.appendChild(tr);
+    }
+  }
+
+  function csvEscape(s){
+    s = (s===null || s===undefined) ? "" : String(s);
+    if (/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+    return s;
+  }
+
+  function downloadCsv(filename, rows){
+    var csv = rows.map(function(r){ return r.map(csvEscape).join(","); }).join("\n");
+    var blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function formatLocal(iso){
+    if(!iso) return "";
+    var d = new Date(iso);
+    if(isNaN(d.getTime())) return iso;
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      year:"numeric", month:"2-digit", day:"2-digit",
+      hour:"2-digit", minute:"2-digit", second:"2-digit",
+      hour12:false
+    }).format(d);
+  }
+
+  // Wide export: sessionId, startTime (LA), reasonsCsv, then one column per station with seconds since start
+  function exportWideCsv(){
+    if(!lastData){ alert("Load a day first."); return; }
+
+    var sessions = lastData.sessions || [];
+
+    // All stations across the day (order of first appearance)
+    var stationSeen = {};
+    var stationList = [];
+
+    for(var i=0;i<sessions.length;i++){
+      var ev = sessions[i].events || [];
+      for(var j=0;j<ev.length;j++){
+        var st = (ev[j].station || "").trim();
+        if(st && !stationSeen[st]){
+          stationSeen[st] = true;
+          stationList.push(st);
+        }
+      }
+    }
+
+    var header = ["sessionId","startTime","reasonsCsv"].concat(stationList);
+    var rows = [header];
+
+    for(var i2=0;i2<sessions.length;i2++){
+      var s = sessions[i2];
+      var ev2 = (s.events || []).slice(0);
+
+      ev2.sort(function(a,b){
+        return String(a.timestampIso||"").localeCompare(String(b.timestampIso||""));
+      });
+
+      var baseIso = "";
+      var baseMs = null;
+      for(var k=0;k<ev2.length;k++){
+        var iso = ev2[k].timestampIso || "";
+        var ms = Date.parse(iso);
+        if(isFinite(ms)){
+          baseIso = iso;
+          baseMs = ms;
+          break;
+        }
+      }
+
+      var firstAt = {};
+      if(baseMs !== null){
+        for(var k2=0;k2<ev2.length;k2++){
+          var st2 = (ev2[k2].station || "").trim();
+          var ms2 = Date.parse(ev2[k2].timestampIso || "");
+          if(!st2 || !isFinite(ms2)) continue;
+          if(firstAt[st2] === undefined){
+            firstAt[st2] = Math.max(0, Math.round((ms2 - baseMs)/1000));
+          }
+        }
+      }
+
+      var row = [s.sessionId || "", formatLocal(baseIso), (s.reasonsCsv || "")];
+      for(var c=0;c<stationList.length;c++){
+        var stCol = stationList[c];
+        var v = (firstAt[stCol] === undefined) ? "" : firstAt[stCol];
+        row.push(v);
+      }
+      rows.push(row);
+    }
+
+    downloadCsv("line-tracker-wide-" + (lastData.day || "day") + ".csv", rows);
+  }
+
+  function loadDay(){
+    var day = document.getElementById("day").value;
+    document.getElementById("msg").textContent = "Loading\u2026";
+    postJson("/api/adminDay", { day: day }, function(err, data){
+      if(err){
+        document.getElementById("msg").textContent = "Error loading (network).";
+        return;
+      }
+      if(!data || !data.ok){
+        document.getElementById("msg").textContent = "API error.";
+        return;
+      }
+      document.getElementById("msg").textContent = "";
+      lastData = data;
+      renderHistogram(data);
+      renderSessions(data);
+      renderTransitions(data);
+    });
+  }
+
+  document.getElementById("day").value = todayLocal();
+  document.getElementById("load").addEventListener("click", loadDay);
+  document.getElementById("exportWide").addEventListener("click", exportWideCsv);
+
+  loadDay();
+})();
+</script>
+</body>
+</html>

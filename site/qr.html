@@ -1,0 +1,194 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>QR Generator - Line Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .row { margin: 12px 0; }
+    input, textarea { font-family: inherit; font-size: 14px; padding: 8px; border-radius: 10px; border: 1px solid #ccc; }
+    textarea { width: 100%; max-width: 900px; height: 140px; }
+    button { padding:8px 10px; border-radius:10px; border:1px solid #ccc; background:#f7f7f7; margin-right:8px; }
+    label { margin-right: 14px; }
+    .muted { color:#666; font-size: 13px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; max-width: 1100px; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:12px; text-align:center; }
+    .title { font-weight:700; margin-bottom:6px; font-size: 16px; }
+    .url { font-size: 12px; color:#333; word-break: break-all; margin-top: 8px; }
+    .qrimg { width: 200px; height: 200px; }
+
+    .posterTitle {
+      font-size: 64px;
+      font-weight: 700;
+      margin-bottom: 24px;
+      display:none;
+    }
+
+    /* One-per-page print mode */
+    body.oneperpage .grid { display:block; max-width:none; }
+    body.oneperpage .card {
+      border: none;
+      padding: 0;
+      margin: 0;
+      page-break-after: always;
+      break-after: page;
+      text-align: center;
+    }
+
+    body.oneperpage .posterTitle { display:block; }
+    body.oneperpage .title { font-size: 42px; margin-bottom: 20px; }
+    body.oneperpage .qrimg { width: 650px; height: 650px; }
+    body.oneperpage .url { font-size: 18px; margin-top: 16px; }
+
+    @media print {
+      .noprint { display:none !important; }
+      body { margin: 0.35in; }
+      body.oneperpage .card { page-break-after: always; }
+    }
+  </style>
+</head>
+<body>
+  <h2 class="noprint">Station QR Generator</h2>
+
+  <div class="row noprint">
+    <div class="muted">Generate printable QR posters for each station.</div>
+  </div>
+
+  <div class="row noprint">
+    Poster Title:
+    <input id="posterTitleInput" type="text" size="40" value="Please Scan When You Arrive"/>
+  </div>
+
+  <div class="row noprint">
+    Base URL:
+    <input id="base" type="text" size="55"/>
+  </div>
+
+  <div class="row noprint">
+    Stations (one per line):
+    <textarea id="stations"></textarea>
+  </div>
+
+  <div class="row noprint">
+    <label><input id="oneperpage" type="checkbox"/> Print: One QR per page (large)</label>
+  </div>
+
+  <div class="row noprint">
+    <button id="gen" type="button">Generate</button>
+    <button id="print" type="button">Print</button>
+    <span id="msg" class="muted"></span>
+  </div>
+
+  <div id="out" class="grid"></div>
+
+<script>
+(function(){
+  function defaultBase(){
+    return window.location.origin;
+  }
+
+  function enc(s){ return encodeURIComponent(s); }
+
+  function qrUrl(data, big){
+    var size = big ? "750x750" : "220x220";
+    return "https://api.qrserver.com/v1/create-qr-code/?size=" + size + "&data=" + enc(data);
+  }
+
+  function normStation(s){
+    s = (s || "").trim();
+    if(!s) return "";
+    s = s.replace(/^https?:\/\/[^\/]+/i, "");
+    s = s.replace(/^\/+/, "");
+    if(s.indexOf("s/") === 0) s = s.slice(2);
+    if(s.indexOf("/s/") === 0) s = s.slice(3);
+    return s.trim();
+  }
+
+  function stationUrl(base, station){
+    return base.replace(/\/+$/,"") + "/s/" + enc(station);
+  }
+
+  function setMode(){
+    var isOne = document.getElementById("oneperpage").checked;
+    document.body.className = isOne ? "oneperpage" : "";
+  }
+
+  function generate(){
+    setMode();
+
+    var base = document.getElementById("base").value.trim() || defaultBase();
+    document.getElementById("base").value = base;
+
+    var posterTitle = document.getElementById("posterTitleInput").value.trim();
+
+    var raw = document.getElementById("stations").value.split(/\r?\n/);
+    var stations = [];
+    var seen = {};
+    for(var i=0;i<raw.length;i++){
+      var st = normStation(raw[i]);
+      if(st && !seen[st]){
+        seen[st] = true;
+        stations.push(st);
+      }
+    }
+
+    var out = document.getElementById("out");
+    out.innerHTML = "";
+
+    if(stations.length === 0){
+      document.getElementById("msg").textContent = "No stations entered.";
+      return;
+    }
+
+    var one = document.getElementById("oneperpage").checked;
+    document.getElementById("msg").textContent = "Generated " + stations.length + " QR code(s).";
+
+    for(var j=0;j<stations.length;j++){
+      var st2 = stations[j];
+      var url = stationUrl(base, st2);
+
+      var card = document.createElement("div");
+      card.className = "card";
+
+      if(one){
+        card.innerHTML =
+          '<div class="posterTitle">'+posterTitle+'</div>' +
+          '<div class="title">'+st2+'</div>' +
+          '<img class="qrimg" alt="QR" src="'+qrUrl(url, true)+'"/>' +
+          '<div class="url">'+url+'</div>';
+      } else {
+        card.innerHTML =
+          '<div class="title">'+st2+'</div>' +
+          '<img class="qrimg" alt="QR" src="'+qrUrl(url, false)+'"/>' +
+          '<div class="url">'+url+'</div>';
+      }
+
+      out.appendChild(card);
+    }
+  }
+
+  document.getElementById("base").value = defaultBase();
+  document.getElementById("stations").value = [
+    "Entrance",
+    "Check-In",
+    "Admin",
+    "Vitals",
+    "IMR",
+    "Provider",
+    "Lab",
+    "Radiology",
+    "Immunizations",
+    "Check-Out"
+  ].join("\n");
+
+  document.getElementById("gen").addEventListener("click", generate);
+  document.getElementById("print").addEventListener("click", function(){ window.print(); });
+  document.getElementById("oneperpage").addEventListener("change", generate);
+
+  generate();
+})();
+</script>
+</body>
+</html>
