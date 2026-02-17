@@ -1,201 +1,242 @@
 <!doctype html>
 <html>
+
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Line Tracker v3</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; line-height:1.3; }
-    .card { max-width: 680px; border:1px solid #ddd; border-radius:12px; padding:16px; }
-    .big { font-size: 34px; font-weight: 700; margin: 8px 0; }
-    .muted { color:#666; }
-    code { background:#f3f3f3; padding:2px 6px; border-radius:6px; }
-    label { display:block; margin:6px 0; }
-    button { padding:10px 12px; border-radius:10px; border:1px solid #ccc; background:#f7f7f7; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div><b>Station:</b> <code id="station">(loading)</code></div>
-    <div class="muted" id="status">Loading…</div>
-
-    <div style="margin-top:12px;">
-      <div class="muted">Total time so far</div>
-      <div class="big" id="elapsed">—</div>
-    </div>
-
-    <div id="reasonsBlock" style="margin-top:14px; display:none;">
-      <div><b>Reason for visit</b> (optional)</div>
-      <div class="muted">Select all that apply.</div>
-      <div id="reasons"></div>
-      <button id="saveReasons" type="button">Save</button>
-      <div class="muted" id="reasonsMsg" style="margin-top:8px;"></div>
-    </div>
-
-    <div class="muted" style="margin-top:14px;">Session: <code id="sid">(loading)</code></div>
-  </div>
-
-<script>
-(function () {
-  var reasonsList = [
-    "Check-in / Appointment","Lab","Imaging","Medication / Refill",
-    "Billing / Insurance","Forms / Paperwork","Other"
-  ];
-
-  function getStation() {
-    try {
-      var qs = new URLSearchParams(window.location.search || "");
-      var s1 = qs.get("station");
-      if (s1) return s1;
-    } catch (e) {}
-
-    var path = (window.location.pathname || "").replace(/\/+$/, "");
-    var m = path.match(/^\/s\/([^\/]+)$/);
-    return m ? decodeURIComponent(m[1]) : null;
-  }
-
-  function uuidFallback() {
-    function rnd(n){ return Math.floor(Math.random()*n); }
-    var hex = "0123456789abcdef";
-    var s = "";
-    for (var i=0;i<32;i++) s += hex[rnd(16)];
-    return s.slice(0,8) + "-" + s.slice(8,12) + "-4" + s.slice(13,16) + "-" +
-      (8+rnd(4)).toString(16) + s.slice(17,20) + "-" + s.slice(20);
-  }
-
-  function getOrCreateSid() {
-    var sid = null;
-    try { sid = window.localStorage.getItem("line_session_id"); } catch (e) {}
-    if (!sid) {
-      try {
-        if (window.crypto && window.crypto.randomUUID) sid = window.crypto.randomUUID();
-        else sid = uuidFallback();
-      } catch (e2) {
-        sid = uuidFallback();
-      }
-      try { window.localStorage.setItem("line_session_id", sid); } catch (e3) {}
-    }
-    return sid;
-  }
-
-  function nice(secs) {
-    secs = Math.max(0, Math.floor(secs || 0));
-    var h = Math.floor(secs/3600);
-    var m = Math.floor((secs%3600)/60);
-    var s = secs%60;
-    if (h > 0) return h + "h " + m + "m";
-    if (m > 0) return m + "m " + s + "s";
-    return s + "s";
-  }
-
-  function postJson(path, payload, cb) {
-    try {
-      fetch(path, {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(payload || {})
-      }).then(function (res) {
-        return res.json();
-      }).then(function (data) {
-        cb(null, data);
-      }).catch(function (err) {
-        cb(err, null);
-      });
-    } catch (e) {
-      cb(e, null);
-    }
-  }
-
-  function renderReasons() {
-    var div = document.getElementById("reasons");
-    div.innerHTML = "";
-    for (var i=0; i<reasonsList.length; i++) {
-      var r = reasonsList[i];
-      var id = "r" + i;
-      var lab = document.createElement("label");
-      lab.innerHTML = '<input type="checkbox" id="' + id + '" value="' + r.replace(/"/g,'&quot;') + '"> ' + r;
-      div.appendChild(lab);
-    }
-  }
-
-  function selectedReasons() {
-    var out = [];
-    var boxes = document.querySelectorAll("#reasons input[type=checkbox]");
-    for (var i=0;i<boxes.length;i++){
-      if (boxes[i].checked) out.push(boxes[i].value);
-    }
-    return out;
-  }
-
-  function setText(id, txt) {
-    var el = document.getElementById(id);
-    if (el) el.textContent = txt;
-  }
-
-  function main() {
-    var station = getStation();
-    var sid = getOrCreateSid();
-
-    setText("station", station || "(missing)");
-    setText("sid", sid || "(missing)");
-
-    if (!station) {
-      setText("status", "Invalid URL. Use /s/entry etc.");
-      return;
-    }
-
-    setText("status", "Recording your spot…");
-
-    postJson("/api/logEvent", {
-      sessionId: sid,
-      station: station,
-      clientTimestampIso: (new Date()).toISOString(),
-      userAgent: (navigator && navigator.userAgent) ? navigator.userAgent : ""
-    }, function (err, out) {
-      if (err) {
-        setText("status", "Page error: " + (err.message || String(err)));
-        return;
-      }
-      if (!out || !out.ok) {
-        setText("status", "API error: " + ((out && out.error) ? out.error : "unknown"));
-        return;
-      }
-
-      setText("status", "Saved.");
-      setText("elapsed", nice(out.totalWaitSeconds || 0));
-
-      if (!((out.reasonsCsv || "").replace(/\s/g,""))) {
-        renderReasons();
-        document.getElementById("reasonsBlock").style.display = "block";
-      }
-
-      if (out.entryIso) {
-        var entryMs = Date.parse(out.entryIso);
-        if (isFinite(entryMs)) {
-          setInterval(function () {
-            setText("elapsed", nice((Date.now() - entryMs) / 1000));
-          }, 5000);
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Line Tracker v3</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.3;
         }
-      }
-    });
-  }
 
-  document.getElementById("saveReasons").addEventListener("click", function () {
-    var msg = document.getElementById("reasonsMsg");
-    msg.textContent = "Saving…";
-    var sid = document.getElementById("sid").textContent;
-    postJson("/api/saveReasons", { sessionId: sid, reasons: selectedReasons() }, function (err, out) {
-      if (err) msg.textContent = "Error: " + (err.message || String(err));
-      else msg.textContent = (out && out.ok) ? "Saved. Thank you." : ("Error: " + ((out && out.error) ? out.error : "unknown"));
+        .card {
+            max-width: 680px;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 16px;
+        }
 
-      if (out && out.ok) {
-        setTimeout(function () { document.getElementById("reasonsBlock").style.display = "none"; }, 800);
-      }
-    });
-  });
+        .big {
+            font-size: 34px;
+            font-weight: 700;
+            margin: 8px 0;
+        }
 
-  main();
-})();
-</script>
+        .muted {
+            color: #666;
+        }
+
+        code {
+            background: #f3f3f3;
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
+        label {
+            display: block;
+            margin: 6px 0;
+        }
+
+        button {
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid #ccc;
+            background: #f7f7f7;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div><b>Station:</b> <code id="station">(loading)</code></div>
+        <div class="muted" id="status">Loading…</div>
+
+        <div style="margin-top:12px;">
+            <div class="muted">Total time so far</div>
+            <div class="big" id="elapsed">—</div>
+        </div>
+
+        <div id="reasonsBlock" style="margin-top:14px; display:none;">
+            <div><b>Reason for visit</b> (optional)</div>
+            <div class="muted">Select all that apply.</div>
+            <div id="reasons"></div>
+            <button id="saveReasons" type="button">Save</button>
+            <div class="muted" id="reasonsMsg" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="muted" style="margin-top:14px;">Session: <code id="sid">(loading)</code></div>
+    </div>
+
+    <script>
+        (function () {
+            var reasonsList = [
+                "Sick Call",
+                "Appointment",
+                "PHA/Immunization/Lab",
+                "Special Physical",
+                "Check-in (new to command)",
+                "Check-out (leaving command)",
+                "Other"
+            ];
+
+            function getStation() {
+                try {
+                    var qs = new URLSearchParams(window.location.search || "");
+                    var s1 = qs.get("station");
+                    if (s1) return s1;
+                } catch (e) { }
+
+                var path = (window.location.pathname || "").replace(/\/+$/, "");
+                var m = path.match(/^\/s\/([^\/]+)$/);
+                return m ? decodeURIComponent(m[1]) : null;
+            }
+
+            function uuidFallback() {
+                function rnd(n) { return Math.floor(Math.random() * n); }
+                var hex = "0123456789abcdef";
+                var s = "";
+                for (var i = 0; i < 32; i++) s += hex[rnd(16)];
+                return s.slice(0, 8) + "-" + s.slice(8, 12) + "-4" + s.slice(13, 16) + "-" +
+                    (8 + rnd(4)).toString(16) + s.slice(17, 20) + "-" + s.slice(20);
+            }
+
+            function getOrCreateSid() {
+                var sid = null;
+                try { sid = window.localStorage.getItem("line_session_id"); } catch (e) { }
+                if (!sid) {
+                    try {
+                        if (window.crypto && window.crypto.randomUUID) sid = window.crypto.randomUUID();
+                        else sid = uuidFallback();
+                    } catch (e2) {
+                        sid = uuidFallback();
+                    }
+                    try { window.localStorage.setItem("line_session_id", sid); } catch (e3) { }
+                }
+                return sid;
+            }
+
+            function nice(secs) {
+                secs = Math.max(0, Math.floor(secs || 0));
+                var h = Math.floor(secs / 3600);
+                var m = Math.floor((secs % 3600) / 60);
+                var s = secs % 60;
+                if (h > 0) return h + "h " + m + "m";
+                if (m > 0) return m + "m " + s + "s";
+                return s + "s";
+            }
+
+            function postJson(path, payload, cb) {
+                try {
+                    fetch(path, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload || {})
+                    }).then(function (res) {
+                        return res.json();
+                    }).then(function (data) {
+                        cb(null, data);
+                    }).catch(function (err) {
+                        cb(err, null);
+                    });
+                } catch (e) {
+                    cb(e, null);
+                }
+            }
+
+            function renderReasons() {
+                var div = document.getElementById("reasons");
+                div.innerHTML = "";
+                for (var i = 0; i < reasonsList.length; i++) {
+                    var r = reasonsList[i];
+                    var id = "r" + i;
+                    var lab = document.createElement("label");
+                    lab.innerHTML = '<input type="checkbox" id="' + id + '" value="' + r.replace(/"/g, '&quot;') + '"> ' + r;
+                    div.appendChild(lab);
+                }
+            }
+
+            function selectedReasons() {
+                var out = [];
+                var boxes = document.querySelectorAll("#reasons input[type=checkbox]");
+                for (var i = 0; i < boxes.length; i++) {
+                    if (boxes[i].checked) out.push(boxes[i].value);
+                }
+                return out;
+            }
+
+            function setText(id, txt) {
+                var el = document.getElementById(id);
+                if (el) el.textContent = txt;
+            }
+
+            function main() {
+                var station = getStation();
+                var sid = getOrCreateSid();
+
+                setText("station", station || "(missing)");
+                setText("sid", sid || "(missing)");
+
+                if (!station) {
+                    setText("status", "Invalid URL. Use /s/entry etc.");
+                    return;
+                }
+
+                setText("status", "Recording your spot…");
+
+                postJson("/api/logEvent", {
+                    sessionId: sid,
+                    station: station,
+                    clientTimestampIso: (new Date()).toISOString(),
+                    userAgent: (navigator && navigator.userAgent) ? navigator.userAgent : ""
+                }, function (err, out) {
+                    if (err) {
+                        setText("status", "Page error: " + (err.message || String(err)));
+                        return;
+                    }
+                    if (!out || !out.ok) {
+                        setText("status", "API error: " + ((out && out.error) ? out.error : "unknown"));
+                        return;
+                    }
+
+                    setText("status", "Saved.");
+                    setText("elapsed", nice(out.totalWaitSeconds || 0));
+
+                    if (!((out.reasonsCsv || "").replace(/\s/g, ""))) {
+                        renderReasons();
+                        document.getElementById("reasonsBlock").style.display = "block";
+                    }
+
+                    if (out.entryIso) {
+                        var entryMs = Date.parse(out.entryIso);
+                        if (isFinite(entryMs)) {
+                            setInterval(function () {
+                                setText("elapsed", nice((Date.now() - entryMs) / 1000));
+                            }, 5000);
+                        }
+                    }
+                });
+            }
+
+            document.getElementById("saveReasons").addEventListener("click", function () {
+                var msg = document.getElementById("reasonsMsg");
+                msg.textContent = "Saving…";
+                var sid = document.getElementById("sid").textContent;
+                postJson("/api/saveReasons", { sessionId: sid, reasons: selectedReasons() }, function (err, out) {
+                    if (err) msg.textContent = "Error: " + (err.message || String(err));
+                    else msg.textContent = (out && out.ok) ? "Saved. Thank you." : ("Error: " + ((out && out.error) ? out.error : "unknown"));
+
+                    if (out && out.ok) {
+                        setTimeout(function () { document.getElementById("reasonsBlock").style.display = "none"; }, 800);
+                    }
+                });
+            });
+
+            main();
+        })();
+    </script>
 </body>
+
 </html>
