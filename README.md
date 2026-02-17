@@ -102,6 +102,30 @@ This design allows:
 
 ---
 
+## Architecture Diagram
+
+```mermaid
+%% See docs/architecture.mmd for the editable source
+flowchart LR
+  U[Patient / Staff<br/>Phone Camera] -->|Scan QR| CF[CloudFront<br/>CDN + HTTPS]
+  CF -->|Viewer Request| CFF[CloudFront Function<br/>Rewrite /s/{station} → /index.html?station=...]
+  CF -->|GET /index.html, /admin.html, /qr.html| S3[(S3 Bucket<br/>Static Site Assets)]
+  S3 --> CF
+  CF -->|POST /api/logEvent<br/>POST /api/adminDay| APIGW[API Gateway<br/>HTTP API ($default stage)]
+  APIGW --> L[Lambda (Python)<br/>Event logging + analytics]
+  L --> DDB[(DynamoDB<br/>DAY#YYYY-MM-DD partition)]
+  DDB --> L
+  L --> APIGW
+  APIGW --> CF
+  CF --> U
+
+  subgraph Data Model
+    PK[pk = DAY#YYYY-MM-DD] --> SK1[sk = SESSION#{sessionId}]
+    PK --> SK2[sk = SESSION#{sessionId}#EVENT#{timestampIso}]
+  end
+
+---
+
 ## Deployment (AWS)
 
 The repository includes a one-shot bootstrap script:

@@ -1,0 +1,29 @@
+flowchart LR
+  %% Client
+  U[Patient / Staff<br/>Phone Camera] -->|Scan QR| CF[CloudFront<br/>CDN + HTTPS]
+
+  %% Edge routing
+  CF -->|Viewer Request| CFF[CloudFront Function<br/>Rewrite /s/{station} → /index.html?station=...]
+
+  %% Static site
+  CF -->|GET /index.html, /admin.html, /qr.html| S3[(S3 Bucket<br/>Static Site Assets)]
+  S3 --> CF
+
+  %% API calls
+  CF -->|POST /api/logEvent<br/>POST /api/adminDay| APIGW[API Gateway<br/>HTTP API ( stage)]
+  APIGW --> L[Lambda (Python)<br/>Event logging + analytics]
+
+  %% Storage
+  L --> DDB[(DynamoDB<br/>DAY#YYYY-MM-DD partition)]
+  DDB --> L
+
+  %% Admin analytics output
+  L --> APIGW
+  APIGW --> CF
+  CF --> U
+
+  %% Notes
+  subgraph Data Model
+    PK[pk = DAY#YYYY-MM-DD] --> SK1[sk = SESSION#{sessionId}]
+    PK --> SK2[sk = SESSION#{sessionId}#EVENT#{timestampIso}]
+  end
