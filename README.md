@@ -108,7 +108,7 @@ This design allows:
 %% See docs/architecture.mmd for the editable source
 flowchart LR
   U[Patient / Staff<br/>Phone Camera] -->|Scan QR| CF[CloudFront<br/>CDN + HTTPS]
-  CF -->|Viewer Request| CFF[CloudFront Function<br/>Rewrite /s/{station} → /index.html?station=...]
+  CF -->|Viewer Request| CFF[CloudFront Function<br/>Rewrite /s/{station} -> /index.html?station=...]
   CF -->|GET /index.html, /admin.html, /qr.html| S3[(S3 Bucket<br/>Static Site Assets)]
   S3 --> CF
   CF -->|POST /api/logEvent<br/>POST /api/adminDay| APIGW[API Gateway<br/>HTTP API ($default stage)]
