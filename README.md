@@ -280,3 +280,31 @@ It was built to solve an actual workflow measurement problem using modern cloud-
 ## License
 
 MIT License
+## Architecture Diagram
+
+`mermaid
+flowchart LR
+
+  U[Patient / Staff Phone] --> CF[CloudFront CDN]
+
+  CF --> CFF[CloudFront Function Rewrite]
+  CFF --> CF
+
+  CF -->|Static Assets| S3[S3 Static Site]
+
+  CF -->|POST API| APIGW[API Gateway HTTP API]
+  APIGW --> L[Lambda Python]
+
+  L --> DDB[DynamoDB Day Partition]
+  DDB --> L
+
+  L --> APIGW
+  APIGW --> CF
+  CF --> U
+
+  subgraph DataModel
+    PK[pk = DAY-YYYY-MM-DD]
+    SK1[sk = SESSION-sessionId]
+    SK2[sk = SESSION-sessionId-EVENT-timestamp]
+  end
+
